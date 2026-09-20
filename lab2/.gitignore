@@ -1,0 +1,8 @@
+*.o
+*.a
+*.so
+swap_demo
+revert_demo
+main_static
+main_dynamic
+run_tests
