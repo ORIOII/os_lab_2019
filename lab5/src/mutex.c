@@ -9,30 +9,57 @@
  * mutex.c
  *
  * Simple multi-threaded example with a mutex lock.
+ *
+ * Лабораторная работа №5, задание 1.
+ *
+ * Одна и та же программа собирается в ДВЕ версии (см. makefile):
+ *
+ *   mutex_nolock  — без мьютекса (макрос USE_MUTEX не определён);
+ *   mutex_lock    — с мьютексом (gcc -DUSE_MUTEX ...).
+ *
+ * Два потока по 50 раз увеличивают общую переменную common на 1.
+ * Правильный итог — 2 * 50 = 100. Увеличение сделано намеренно «медленным»
+ * (прочитать -> долгий цикл -> записать), чтобы состояние гонки проявлялось
+ * почти всегда.
  */
 #include <errno.h>
 #include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
 
-void do_one_thing(int *);
-void do_another_thing(int *);
+#define ITERATIONS 50 /* сколько раз каждый поток увеличивает счётчик */
+#define SPIN 500000UL /* длина «долгого» цикла внутри критической секции */
+
+#ifdef USE_MUTEX
+#define LOCK(m) pthread_mutex_lock(m)
+#define UNLOCK(m) pthread_mutex_unlock(m)
+#else
+#define LOCK(m) ((void)0) /* без мьютекса защиты нет */
+#define UNLOCK(m) ((void)0)
+#endif
+
+void *do_one_thing(void *);
+void *do_another_thing(void *);
 void do_wrap_up(int);
+
 int common = 0; /* A shared variable for two threads */
-int r1 = 0, r2 = 0, r3 = 0;
 pthread_mutex_t mut = PTHREAD_MUTEX_INITIALIZER;
 
 int main() {
   pthread_t thread1, thread2;
 
-  if (pthread_create(&thread1, NULL, (void *)do_one_thing,
-			  (void *)&common) != 0) {
+#ifdef USE_MUTEX
+  printf("Mode: WITH mutex\n");
+#else
+  printf("Mode: WITHOUT mutex\n");
+#endif
+
+  if (pthread_create(&thread1, NULL, do_one_thing, (void *)&common) != 0) {
     perror("pthread_create");
     exit(1);
   }
 
-  if (pthread_create(&thread2, NULL, (void *)do_another_thing,
-                     (void *)&common) != 0) {
+  if (pthread_create(&thread2, NULL, do_another_thing, (void *)&common) != 0) {
     perror("pthread_create");
     exit(1);
   }
@@ -52,41 +79,45 @@ int main() {
   return 0;
 }
 
-void do_one_thing(int *pnum_times) {
-  int i, j, x;
-  unsigned long k;
+/* Функции потоков имеют вид void *f(void *), как требует pthread_create. */
+void *do_one_thing(void *arg) {
+  int *pnum_times = (int *)arg;
+  int i;
+  volatile unsigned long k; /* volatile — чтобы компилятор не выбросил цикл */
   int work;
-  for (i = 0; i < 50; i++) {
-    // pthread_mutex_lock(&mut);
+  for (i = 0; i < ITERATIONS; i++) {
+    LOCK(&mut); /* ---- начало критической секции ---- */
     printf("doing one thing\n");
     work = *pnum_times;
     printf("counter = %d\n", work);
     work++; /* increment, but not write */
-    for (k = 0; k < 500000; k++)
+    for (k = 0; k < SPIN; k++)
       ;                 /* long cycle */
     *pnum_times = work; /* write back */
-	// pthread_mutex_unlock(&mut);
+    UNLOCK(&mut);       /* ---- конец критической секции ---- */
   }
+  return NULL;
 }
 
-void do_another_thing(int *pnum_times) {
-  int i, j, x;
-  unsigned long k;
+void *do_another_thing(void *arg) {
+  int *pnum_times = (int *)arg;
+  int i;
+  volatile unsigned long k;
   int work;
-  for (i = 0; i < 50; i++) {
-    // pthread_mutex_lock(&mut);
+  for (i = 0; i < ITERATIONS; i++) {
+    LOCK(&mut);
     printf("doing another thing\n");
     work = *pnum_times;
     printf("counter = %d\n", work);
     work++; /* increment, but not write */
-    for (k = 0; k < 500000; k++)
+    for (k = 0; k < SPIN; k++)
       ;                 /* long cycle */
     *pnum_times = work; /* write back */
-    // pthread_mutex_unlock(&mut);
+    UNLOCK(&mut);
   }
+  return NULL;
 }
 
 void do_wrap_up(int counter) {
-  int total;
-  printf("All done, counter = %d\n", counter);
+  printf("All done, counter = %d (expected %d)\n", counter, 2 * ITERATIONS);
 }
